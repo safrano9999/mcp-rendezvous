@@ -1,7 +1,7 @@
 # mcp-rendezvous
 
-Local preview **0.1.0**. Python and Node.js libraries for persistent completion
-feedback from selected MCP tools. Neither package has been published.
+Version **0.1.0**. Python and Node.js libraries for persistent completion
+feedback from selected MCP tools.
 An optional REST service provides the same feedback flow to applications that
 do not use MCP or either SDK.
 
@@ -18,9 +18,15 @@ and logs are fetched separately after notification or an explicit user request.
 - Herdr delivery requires Linux, a local Herdr 0.8+ instance under the service
   user and an explicit live agent name or pane ID. Webhook delivery is portable.
 
-Install the local Python checkout with `python -m pip install -e .`. For Node,
-run `npm install /absolute/path/to/mcp-rendezvous/node` in the consuming project.
-The package names are provisional until registry ownership is checked at release.
+Install the Python package from PyPI:
+
+```sh
+python -m pip install mcp-rendezvous
+```
+
+For local Python development, use `python -m pip install -e .`. The Node package
+is currently distributed locally, not through npm: run
+`npm install /absolute/path/to/mcp-rendezvous/node` in the consuming project.
 
 ## Operator policy
 
@@ -165,5 +171,4 @@ npm pack ./node --pack-destination dist
 Both SDKs consume the shared contract fixtures in `tests/fixtures`. Tests also
 exercise real local HTTP delivery, Herdr command construction with a harmless
 fake executable, interruption handling and cross-language state compatibility.
-Before publication, confirm package names, author/license metadata and registry
-accounts; credentials are never needed for development, tests or local builds.
+Credentials are never needed for development, tests or local builds.
