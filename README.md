@@ -155,11 +155,11 @@ than MCP tools. Request bodies are limited to 64 KiB.
 ## Development and local artifacts
 
 ```sh
-python -m unittest discover -s tests -v
 npm --prefix node ci
+python -m unittest discover -s tests -v
 npm --prefix node test
 python -m pip wheel --no-deps . --wheel-dir dist
-npm --prefix node pack --pack-destination ../dist
+npm pack ./node --pack-destination dist
 ```
 
 Both SDKs consume the shared contract fixtures in `tests/fixtures`. Tests also
