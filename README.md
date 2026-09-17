@@ -1,5 +1,8 @@
 # mcp-rendezvous
 
+[![PyPI](https://img.shields.io/pypi/v/mcp-rendezvous)](https://pypi.org/project/mcp-rendezvous/)
+[![npm](https://img.shields.io/npm/v/mcp-rendezvous)](https://www.npmjs.com/package/mcp-rendezvous)
+
 Version **0.1.0**. Python and Node.js libraries for persistent completion
 feedback from selected MCP tools.
 An optional REST service provides the same feedback flow to applications that
@@ -10,13 +13,44 @@ worker later sends a completion-only webhook (`POST {}`) or a fixed Herdr prompt
 (`finished` plus one real Enter), for success, failure or cancellation. Results
 and logs are fetched separately after notification or an explicit user request.
 
+**[Python / PyPI](https://pypi.org/project/mcp-rendezvous/)** ·
+**[Node.js / npm](https://www.npmjs.com/package/mcp-rendezvous)** ·
+**[REST API](#rest-api-for-applications-without-mcp)** ·
+**[OpenAPI specification](mcp_rendezvous/openapi.json)** ·
+**[Issues](https://github.com/safrano9999/mcp-rendezvous/issues)**
+
+## How it works
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant App as MCP server or REST application
+    participant Worker as Persistent worker
+    Client->>App: Start operation with optional feedback destination
+    App->>Worker: Register job and start operation
+    App-->>Client: Accepted, feedback_id, end this turn
+    Note over Client: Free to do other work; no status polling
+    Worker->>Worker: Observe success, failure or cancellation
+    Worker-->>Client: Webhook POST {} or Herdr finished + Enter
+    Client->>App: Fetch status and logs when needed
+```
+
+The MCP connection may use stdio or HTTP. Completion feedback travels through
+the selected webhook or Herdr adapter; it does not require keeping the original
+MCP request open. Applications without MCP can use the same flow through REST.
+The receiving client decides how a notification resumes its work.
+
 ## Packages
 
-- Python: `mcp-rendezvous`, import `mcp_rendezvous`, Python 3.11+.
-- Node.js: `mcp-rendezvous`, ESM, Node 20+.
-- Operator policy: `mcp_rendezvous/schema.json`, also included in the npm package.
-- Herdr delivery requires Linux, a local Herdr 0.8+ instance under the service
-  user and an explicit live agent name or pane ID. Webhook delivery is portable.
+| Interface | Package / documentation | Requirements |
+| --- | --- | --- |
+| Python SDK | [mcp-rendezvous on PyPI](https://pypi.org/project/mcp-rendezvous/), import `mcp_rendezvous` | Python 3.11+ |
+| Node.js SDK | [mcp-rendezvous on npm](https://www.npmjs.com/package/mcp-rendezvous), [SDK README](node/README.md) | Node.js 20+, ESM |
+| REST service | `mcp-rendezvous-rest`, included in the Python package; [OpenAPI 3.1](mcp_rendezvous/openapi.json) | Python 3.11+, POSIX file locking |
+| Operator policy | [JSON Schema](mcp_rendezvous/schema.json), also exported as `mcp-rendezvous/schema.json` in npm | Shared by all three interfaces |
+
+Herdr delivery requires Linux, a local Herdr 0.8+ instance under the service
+user and an explicit live agent name or pane ID. Webhook delivery is portable.
 
 Install the Python package from PyPI:
 
@@ -24,13 +58,29 @@ Install the Python package from PyPI:
 python -m pip install mcp-rendezvous
 ```
 
-For local Python development, use `python -m pip install -e .`. The Node package
-is currently distributed locally, not through npm: run
+Install the Node.js package from npm:
+
+```sh
+npm install mcp-rendezvous
+```
+
+The REST command is installed with the Python package:
+
+```sh
+mcp-rendezvous-rest --help
+```
+
+For local development, use `python -m pip install -e .` or
 `npm install /absolute/path/to/mcp-rendezvous/node` in the consuming project.
 
 ## Operator policy
 
-`examples/safrano.json` shows the allowlist. The server loads the JSON file; MCP
+Start with [the webhook-only example](examples/webhook.json), saved as
+`feedback.json`. [The Safrano example](examples/safrano.json) allows build/pull
+feedback through both webhook and Herdr; set its absolute Herdr executable path
+to match your installation.
+
+The server loads the JSON file; MCP
 callers cannot replace it. Only listed tool/action pairs may create jobs. Herdr
 and webhook are built-in adapters. The Herdr executable is operator-configured,
 but its arguments are restricted to `agent prompt {target} finished`; only the
@@ -50,8 +100,12 @@ from mcp_rendezvous import Rendezvous, completion_next
 
 rv = Rendezvous("feedback.json", "/persistent/my-mcp/feedback")
 
+# At supervised worker startup; refresh the heartbeat regularly while running.
+rv.recover_deliveries()
+rv.heartbeat()
+
 # In the selected tool, after validating the operation:
-destination = rv.resolve(True, herdr_target="w1:p5")
+destination = rv.resolve(True, url="https://receiver.example/finished")
 job_id = rv.queue("build_images", "run", destination, build_id="example")
 # Dispatch/register the operation with the application's persistent worker.
 response = {"feedback_id": job_id, "next": completion_next(destination)}
@@ -66,7 +120,12 @@ rv.deliver_pending()
 ```javascript
 import { Rendezvous, completionNext } from 'mcp-rendezvous';
 const rv = new Rendezvous('feedback.json', '/persistent/my-mcp/feedback');
-const destination = await rv.resolve(true, '', '', 'w1:p5');
+
+// At supervised worker startup; refresh the heartbeat regularly while running.
+await rv.recoverDeliveries();
+await rv.heartbeat();
+
+const destination = await rv.resolve(true, 'https://receiver.example/finished');
 const jobId = await rv.queue('build_images', 'run', destination, { build_id: 'example' });
 // Dispatch/register the operation with the application's persistent worker.
 const response = { feedback_id: jobId, next: completionNext(destination) };
@@ -75,6 +134,13 @@ const response = { feedback_id: jobId, next: completionNext(destination) };
 await rv.complete(jobId, 'success');
 await rv.deliverPending();
 ```
+
+Replace the example URL with your receiver. These snippets show the application
+and worker lifecycle together; the application's supervised worker runs the
+operation after the tool has returned its accepted response. To use Herdr with
+the corresponding policy, resolve `herdr_target="w1:p5"` in Python or
+`await rv.resolve(true, '', '', 'w1:p5')` in Node.js, using your actual agent or
+pane target.
 
 `resolve(enabled, url, secret, herdr_target)` has the same positional arguments
 in both SDKs. A per-call destination opts in; `false` suppresses feedback. A
@@ -157,6 +223,21 @@ Repeating the same outcome is idempotent; a different recorded outcome returns
 not infer their outcome or build/pull anything itself. The same JSON policy
 controls allowed names even when those names represent REST operations rather
 than MCP tools. Request bodies are limited to 64 KiB.
+
+The complete request and response contract is available in the
+[OpenAPI specification](mcp_rendezvous/openapi.json) and from the running
+service's authenticated `/openapi.json` endpoint.
+
+## Safrano MCP integration
+
+[SAFRANO_MCP](https://github.com/safrano9999/SAFRANO_MCP) (private repository;
+access required) uses this library for
+GitHub build and smart1 pull completion feedback. Its application worker owns
+the build monitoring and pull queue. In automatic mode, successful build stages
+can start their pulls while later stages continue building. A terminal failure
+can notify immediately; success is reported after all selected builds and pulls
+finish. The library supplies the persistent notification mechanism, while the
+MCP server defines when that operation is finished.
 
 ## Development and local artifacts
 

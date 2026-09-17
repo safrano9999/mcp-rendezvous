@@ -2,10 +2,20 @@
   "name": "mcp-rendezvous",
   "version": "0.1.0",
   "description": "Persistent completion feedback for MCP tools via webhook or Herdr",
+  "author": "safrano9999",
+  "homepage": "https://github.com/safrano9999/mcp-rendezvous#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/safrano9999/mcp-rendezvous.git",
+    "directory": "node"
+  },
+  "bugs": {"url": "https://github.com/safrano9999/mcp-rendezvous/issues"},
+  "keywords": ["mcp", "webhook", "notifications", "herdr", "completion"],
   "type": "module",
   "exports": {".": "./src/index.js", "./schema.json": "./schema.json"},
   "files": ["src", "schema.json", "README.md"],
   "engines": {"node": ">=20"},
+  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"},
   "scripts": {"test": "node --test test/*.test.js"},
   "dependencies": {"ajv": "^8.17.1"}
 }
