@@ -1,0 +1,6 @@
+include README.md
+recursive-include examples *.json
+recursive-include tests *.py *.json
+recursive-include node/src *.js
+recursive-include node/test *.js
+include node/schema.json node/package.json node/package-lock.json node/README.md

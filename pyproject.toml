@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-rendezvous"
+version = "0.1.0"
+description = "Persistent completion feedback for MCP tools via webhook or Herdr"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["jsonschema>=4.18,<5"]
+classifiers = ["Development Status :: 3 - Alpha", "Programming Language :: Python :: 3", "Operating System :: POSIX :: Linux"]
+
+[project.scripts]
+mcp-rendezvous-rest = "mcp_rendezvous.rest:main"
+
+[tool.setuptools]
+packages = ["mcp_rendezvous"]
+
+[tool.setuptools.package-data]
+mcp_rendezvous = ["schema.json", "openapi.json"]

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "tools": {
+    "build_images": {"actions": ["run"]},
+    "podman_smart1": {"actions": ["pull"]}
+  },
+  "feedback": {
+    "default": false,
+    "on": ["success", "failure", "cancelled"],
+    "routes": {
+      "herdr": {
+        "adapter": "herdr",
+        "executable": "/usr/local/bin/herdr",
+        "args": ["agent", "prompt", "{target}", "finished"]
+      },
+      "webhook": {"adapter": "webhook", "method": "POST", "body": {}}
+    },
+    "client_instruction": "End this turn immediately. Do not poll."
+  }
+}

@@ -1,0 +1,378 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "mcp-rendezvous REST API",
+    "version": "0.1.0",
+    "description": "Register externally executed operations, report terminal completion, and deliver a completion-only webhook or Herdr prompt. Does not execute builds, pulls or arbitrary commands."
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "CreateJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool",
+          "action"
+        ],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "feedback": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "callback_url": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "callback_secret": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "herdr_target": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      },
+      "CompleteJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "enum": [
+              "success",
+              "failure",
+              "cancelled"
+            ]
+          }
+        }
+      },
+      "JobStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "dispatching",
+              "running",
+              "finished"
+            ]
+          },
+          "outcome": {
+            "enum": [
+              "success",
+              "failure",
+              "cancelled"
+            ]
+          },
+          "notification": {
+            "enum": [
+              "pending",
+              "disabled",
+              "sending",
+              "delivered",
+              "uncertain",
+              "abandoned"
+            ]
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "attempts": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": true
+      },
+      "Accepted": {
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "state",
+          "next"
+        ],
+        "properties": {
+          "feedback_id": {
+            "type": "string"
+          },
+          "state": {
+            "const": "pending"
+          },
+          "next": {
+            "type": "string"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Service and notifier initialized"
+          },
+          "401": {
+            "description": "Bearer required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "responses": {
+          "200": {
+            "description": "This OpenAPI document"
+          }
+        }
+      }
+    },
+    "/v1/jobs": {
+      "post": {
+        "operationId": "createJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJob"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Registered; return immediately without polling",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or operator policy rejected it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Maximum request body is 65536 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Worker/destination unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{feedback_id}": {
+      "parameters": [
+        {
+          "name": "feedback_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getJob",
+        "responses": {
+          "200": {
+            "description": "Private callback data omitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{feedback_id}/complete": {
+      "parameters": [
+        {
+          "name": "feedback_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "completeJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteJob"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Outcome stored; notification is delivered asynchronously",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid terminal outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A different terminal outcome is already recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

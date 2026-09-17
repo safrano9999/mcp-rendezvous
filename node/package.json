@@ -1,0 +1,11 @@
+{
+  "name": "mcp-rendezvous",
+  "version": "0.1.0",
+  "description": "Persistent completion feedback for MCP tools via webhook or Herdr",
+  "type": "module",
+  "exports": {".": "./src/index.js", "./schema.json": "./schema.json"},
+  "files": ["src", "schema.json", "README.md"],
+  "engines": {"node": ">=20"},
+  "scripts": {"test": "node --test test/*.test.js"},
+  "dependencies": {"ajv": "^8.17.1"}
+}
