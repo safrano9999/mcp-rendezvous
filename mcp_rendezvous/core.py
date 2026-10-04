@@ -8,9 +8,13 @@ import tempfile
 import time
 import urllib.request
 import uuid
+import threading
+from weakref import WeakKeyDictionary, finalize
 
 from .policy import Policy
 from .herdr import Herdr, TargetChanged
+from .activity import ConnectionActivity, GENERATED, stamp
+from .table import ActivityTable
 
 STOP_AFTER_DISPATCH = ('End this turn immediately and return control to the user. '
                        'Do not poll, sleep, wait for completion, or start a status loop. ')
@@ -25,6 +29,17 @@ def completion_next(destination):
 
 
 def write(path, data):
+    path = Path(path)
+    if (isinstance(data, dict) and data.get('schema_version') == 1
+            and data.get('id') == path.stem and 'tool' in data and 'state' in data):
+        if path.parent.name == 'jobs':
+            return ActivityTable(path.parent.parent).publish(path, data, _atomic_write)
+        previous = json.loads(path.read_text()) if path.exists() else None
+        stamp(data, previous, time.time())
+    _atomic_write(path, data)
+
+
+def _atomic_write(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(dir=path.parent, prefix='.write-')
@@ -51,7 +66,24 @@ class Rendezvous:
     def __init__(self, config, state_dir):
         self.policy = Policy(config)
         self.root = Path(state_dir)
+        self.table = ActivityTable(self.root)
+        self.table.recover()
         self.herdr = Herdr(self.policy.route('herdr')) if 'herdr' in self.policy.routes else None
+        self._connections = WeakKeyDictionary()
+        self._connections_lock = threading.RLock()
+
+    def connection(self, session):
+        with self._connections_lock:
+            if session not in self._connections:
+                activity = ConnectionActivity(self)
+                self._connections[session] = activity
+                finalize(session, activity.close)
+            return self._connections[session]
+
+    def disconnect(self, session):
+        with self._connections_lock:
+            activity = self._connections.pop(session, None)
+            if activity is not None: activity.close()
 
     def endpoint(self, url, secret=''): return self.policy.endpoint(url, secret)
 
@@ -96,9 +128,9 @@ class Rendezvous:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         (self.root / 'heartbeat').touch(mode=0o600)
 
-    def queue(self, tool, action, destination, *, kind=None, **values):
+    def queue(self, tool, action, destination, *, kind=None, session=None, **values):
         self.policy.allow(tool, action)
-        forbidden = {'schema_version','id','tool','action','callback','created','notification','attempts'}
+        forbidden = {'schema_version','id','tool','action','callback','created','notification','attempts'} | GENERATED
         if forbidden.intersection(values): raise ValueError('Reserved job fields cannot be overwritten')
         if values.get('state', 'pending') not in {'pending','dispatching','finished'}:
             raise ValueError('Invalid initial job state')
@@ -109,9 +141,15 @@ class Rendezvous:
         if not heartbeat.exists() or time.time() - heartbeat.stat().st_mtime > 120:
             raise RuntimeError('Completion worker is not running; operation was not dispatched')
         identifier = uuid.uuid4().hex
-        write(self.path(identifier), {'schema_version':1, 'id':identifier, 'tool':tool, 'action':action,
-              'kind':kind or tool, 'callback':destination, 'created':time.time(), 'state':'pending',
-              'notification':'pending' if destination else 'disabled', 'attempts':0, **values})
+        activity = self.connection(session) if session is not None else None
+        if activity is not None: activity.track(identifier)
+        try:
+            write(self.path(identifier), {'schema_version':1, 'id':identifier, 'tool':tool, 'action':action,
+                  'kind':kind or tool, 'callback':destination, 'created':time.time(), 'state':'pending',
+                  'notification':'pending' if destination else 'disabled', 'attempts':0, **values})
+        except Exception:
+            if activity is not None: activity.untrack(identifier)
+            raise
         return identifier
 
     def path(self, identifier):
@@ -120,20 +158,21 @@ class Rendezvous:
         return self.root / 'jobs' / (identifier + '.json')
 
     def update(self, identifier, **values):
-        if {'id','tool','action','callback','created','schema_version'}.intersection(values):
+        if ({'id','tool','action','callback','created','schema_version'} | GENERATED).intersection(values):
             raise ValueError('Immutable job fields cannot be overwritten')
         path = self.path(identifier)
-        data = json.loads(path.read_text())
-        data.update(values)
-        write(path, data)
+        self.table.mutate(path, lambda data: data.update(values), _atomic_write)
 
     def complete(self, identifier, outcome, **values):
         if outcome not in {'success','failure','cancelled'}: raise ValueError('Invalid terminal outcome')
         if {'state','outcome','finished','notification'}.intersection(values): raise ValueError('Reserved completion fields')
         path = self.path(identifier)
-        data = json.loads(path.read_text())
-        if data['state'] == 'finished': return self.status(identifier)
-        self.update(identifier, **values, state='finished', outcome=outcome, finished=time.time())
+        if ({'id','tool','action','callback','created','schema_version'} | GENERATED).intersection(values):
+            raise ValueError('Immutable job fields cannot be overwritten')
+        def update(data):
+            if data['state'] != 'finished':
+                data.update(**values, state='finished', outcome=outcome, finished=time.time())
+        self.table.mutate(path, update, _atomic_write)
         return self.status(identifier)
 
     def status(self, identifier):
@@ -156,6 +195,9 @@ class Rendezvous:
 
     def deliver(self, path, data):
         self.policy.allow(data['tool'], data['action'])
+        if data['state'] != 'finished': raise ValueError('Only finished jobs can notify')
+        # Publish result + timeline to connection views BEFORE either transport.
+        write(path, data)
         if data['callback'].get('kind') == 'herdr':
             self.policy.route('herdr')
             self.herdr.ready(data['callback'])

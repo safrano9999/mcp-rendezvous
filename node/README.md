@@ -1,6 +1,19 @@
 # mcp-rendezvous
 
-Version **0.1.0**. Node.js ESM completion feedback library.
+Version **0.1.1**. Node.js ESM completion feedback library.
+
+The SDK also exposes an ephemeral connection activity table. Pass the live MCP
+session object as the fifth argument of `rv.queue(tool, action, destination,
+values, session)`. Expose `await rv.connection(session).snapshot(since)` through a
+read-only MCP tool. `since=0` returns the full table; reuse its `cursor` after the
+next completion signal to read only changes. Child jobs linked by `parent_id`
+are included. `rv.disconnect(session)` discards the table, not background jobs.
+
+Status, errors and transition times are written before either completion signal.
+Hooks remain `POST {}` or Herdr `finished` plus Enter. The table includes timing,
+flags and step state; the application owns automatic chaining and sends no
+intermediate signal for internal steps. See the root README for the shared
+Python/Node connection contract and separate-worker behavior.
 Supports persistent webhook `POST {}` and Herdr `finished` + real Enter.
 
 [GitHub documentation](https://github.com/safrano9999/mcp-rendezvous#readme) ·

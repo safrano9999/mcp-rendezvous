@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-rendezvous"
-version = "0.1.0"
+version = "0.1.1"
 description = "Persistent completion feedback for MCP tools via webhook or Herdr"
 authors = [{name = "safrano9999"}]
 readme = "README.md"

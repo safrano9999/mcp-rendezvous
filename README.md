@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/mcp-rendezvous)](https://pypi.org/project/mcp-rendezvous/)
 [![npm](https://img.shields.io/npm/v/mcp-rendezvous)](https://www.npmjs.com/package/mcp-rendezvous)
 
-Version **0.1.0**. Python and Node.js libraries for persistent completion
+Version **0.1.1**. Python and Node.js libraries for persistent completion
 feedback from selected MCP tools.
 An optional REST service provides the same feedback flow to applications that
 do not use MCP or either SDK.
@@ -148,6 +148,93 @@ saved default is used with `true`. `configure('set', url, secret)` or
 `configure('set', '', '', target)` replaces that instance's shared default;
 per-call destinations leave it unchanged. Python also supports keyword arguments.
 
+## Connection activity table
+
+Both SDKs include a read-only activity view for a **logical MCP
+connection**. The MCP adapter supplies its session object; callers cannot select
+another connection by ID. Register jobs with that object when queueing:
+
+```python
+# In an MCP tool; session is ctx.session, supplied by the MCP server.
+job_id = rv.queue("build_images", "run", destination, session=ctx.session,
+                  auto_pull=True)
+
+# Expose this through a read-only MCP tool such as get_connection_activity(since=0).
+result = rv.connection(ctx.session).snapshot(since=0)
+# After the next finished signal, pass result["cursor"] as since.
+```
+
+```javascript
+const jobId = await rv.queue('build_images', 'run', destination,
+  { auto_pull: true }, session);
+const result = await rv.connection(session).snapshot(0);
+// Later: await rv.connection(session).snapshot(result.cursor)
+```
+
+Only connection membership and its view cursor live in memory. Python stores the
+shared table in a fixed **`activity.sqlite3`** file inside the instance's state
+directory. It survives disconnects and process restarts. SQLite transactions
+serialize writers across threads/processes, including read/modify/write updates
+to the same job. No additional runtime dependency is needed (`sqlite3` is part
+of Python). A persistent server-wide cursor supports queries across restarts:
+
+```python
+result = rv.table.snapshot(since=0)  # All jobs in this server's shared table.
+changes = rv.table.snapshot(since=result["cursor"])
+```
+
+Expose this server-wide history only to authorized operators; connection views
+remain isolated by session membership. The Python table contains redacted rows,
+never callback credentials or executor commands. Its file is private (0600).
+The existing private JSON job files remain for application workers. Each Python
+write publishes the file and table under one SQLite write lock; notifications
+follow the committed write. On construction, Rendezvous imports legacy files and
+repairs a crash between file publication and table commit. A missing executor
+file does not erase the persistent table's last recorded status.
+
+The Node SDK continues to read its durable atomic JSON job records; the SQLite
+table API currently belongs to the Python SDK used by Safrano. The result, error,
+timestamps and timeline are
+written **before** either the Herdr `finished` signal or the empty webhook
+`POST {}`. Signals carry no status, logs or next-step instructions. The client
+reads the table, finds relevant job IDs, and requests details/logs separately.
+
+Each response contains `entries`, `total`, `cursor`, `since`, `scope: connection`.
+Python also returns `persistent: true`, `ephemeral: false`, and
+`membership: connection`; Node marks its in-memory view `ephemeral: true`.
+The Python shared table uses `scope: server` and a separate persistent cursor.
+`since=0` returns the full view. Passing a previous
+cursor returns only changed rows; reads never acknowledge or consume changes.
+Elapsed time alone does not create a change. Unknown/future cursors are rejected.
+Rows include the ordinary redacted job status, flags/metadata, `change_cursor`,
+a transition `timeline` and `timing`: UTC queue/start/update/finish/notification
+timestamps and elapsed/queue/run seconds. Unknown execution starts remain null;
+worker-observed starts are marked `started_source: observed`, provider timestamps
+can be marked `provider`. Timeline timestamps are Unix seconds of observation.
+
+Automatic child jobs use `parent_id`; they appear recursively in the initiating
+connection's table even when queued by a separate worker. Applications still
+own operation execution and automatic continuation:
+
+1. Record a successful internal step and queue the configured next step.
+2. Give internal child jobs no callback destination. Do not complete the parent yet.
+3. At the chain's end, or on a stopping error, complete the parent and deliver its
+   single signal. Record failures before delivery; never advance a failed chain.
+
+Safrano uses its existing build → pull → optional update runner for this contract.
+The table itself never dispatches, retries or makes policy decisions. Other MCP
+adapters, including n8n integrations, can use the same SDK/session API; jobs from
+another server/connection are not automatically imported. The standalone REST
+service retains its job API and does not invent MCP sessions for HTTP requests.
+
+Call `rv.disconnect(session)` on explicit connection teardown. Weak session keys
+also release view membership when session objects are collected. Reconnect starts
+an empty connection view; the shared table, background jobs and their original
+destinations survive. Neither callbacks nor
+shell commands are exposed in the table. Application metadata must be nonsecret,
+as with `status()`. Use the exported atomic `write` helper for custom workers to
+record transition times; old records remain readable without fabricated history.
+
 ## Worker contract and persistence
 
 The libraries do **not** detach a thread from a short-lived MCP call and pretend
@@ -164,8 +251,9 @@ them failed or cancelled when appropriate. Call `complete` only at terminal
 completion; it is idempotent. Safrano's existing systemd worker handles its
 GitHub cascade monitoring and interrupted smart1 pulls.
 
-The shared state format is atomic JSON, private files (0600) in a persistent
-directory (0700). Keep operation metadata nonsecret: `status()` hides callback
+The shared job format is atomic JSON, private files (0600) in a persistent
+directory (0700). Python additionally maintains `activity.sqlite3` for its durable
+shared table. Keep operation metadata nonsecret: `status()` hides callback
 destinations and the legacy `command` field, but returns other operation fields.
 Errors expose class names only, never callback secrets. Do not grant MCP callers
 direct write access to the policy, state directory or registered handlers.

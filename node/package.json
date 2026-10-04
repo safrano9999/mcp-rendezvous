@@ -1,6 +1,6 @@
 {
   "name": "mcp-rendezvous",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Persistent completion feedback for MCP tools via webhook or Herdr",
   "author": "safrano9999",
   "homepage": "https://github.com/safrano9999/mcp-rendezvous#readme",

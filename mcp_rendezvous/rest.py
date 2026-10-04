@@ -137,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_api(self):
         self.authorize()
         if self.command == 'GET' and self.path == '/health':
-            return 200, {'status':'ok','version':'0.1.0'}
+            return 200, {'status':'ok','version':'0.1.1'}
         if self.command == 'GET' and self.path == '/openapi.json':
             return 200, json.loads(files('mcp_rendezvous').joinpath('openapi.json').read_text())
         rv = self.server.rv

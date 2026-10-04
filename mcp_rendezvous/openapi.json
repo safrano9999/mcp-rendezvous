@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "mcp-rendezvous REST API",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Register externally executed operations, report terminal completion, and deliver a completion-only webhook or Herdr prompt. Does not execute builds, pulls or arbitrary commands."
   },
   "security": [

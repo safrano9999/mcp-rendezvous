@@ -5,7 +5,9 @@ import { randomUUID, createHmac } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import Ajv from 'ajv';
 import { Herdr, TargetChanged, NotReady, DeliveryUncertain } from './herdr.js';
+import { ConnectionActivity, GENERATED, stamp } from './activity.js';
 export { Herdr, TargetChanged, NotReady, DeliveryUncertain };
+export { ConnectionActivity };
 
 const validate = new Ajv({ strict: false }).compile(JSON.parse(readFileSync(new URL('../schema.json', import.meta.url))));
 const now = () => Date.now() / 1000;
@@ -19,6 +21,9 @@ export function completionNext(destination) {
 }
 
 export async function write(file, data) {
+  if (data?.schema_version === 1 && data.id === path.basename(file, '.json') && 'tool' in data && 'state' in data) {
+    stamp(data, await optional(file), now());
+  }
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = path.join(path.dirname(file), '.write-' + randomUUID());
   let handle;
@@ -67,6 +72,21 @@ export class Rendezvous {
     this.policy = new Policy(config);
     this.root = path.resolve(stateDir);
     this.herdr = this.policy.routes.herdr ? new Herdr(this.policy.route('herdr')) : null;
+    this.connections = new WeakMap();
+    this.connectionCleanup = new FinalizationRegistry(activity => activity.close());
+  }
+  connection(session) {
+    if (!session || !['object', 'function'].includes(typeof session)) throw new Error('A connection object is required');
+    if (!this.connections.has(session)) {
+      const activity = new ConnectionActivity(this);
+      this.connections.set(session, activity);
+      this.connectionCleanup.register(session, activity, activity);
+    }
+    return this.connections.get(session);
+  }
+  disconnect(session) {
+    const activity = this.connections.get(session);
+    if (activity) { activity.close(); this.connectionCleanup.unregister(activity); this.connections.delete(session); }
   }
   endpoint(url, secret = '') { return this.policy.endpoint(url, secret); }
   async destination(url = '', secret = '', herdrTarget = '') {
@@ -113,9 +133,9 @@ export class Rendezvous {
     if (typeof id !== 'string' || id.length !== 32 || !/^[0-9a-f]{32}$/.test(id)) throw new Error('Invalid feedback_id');
     return path.join(this.root, 'jobs', id + '.json');
   }
-  async queue(tool, action, destination, values = {}) {
+  async queue(tool, action, destination, values = {}, session = null) {
     this.policy.allow(tool, action);
-    if (['schema_version','id','tool','action','callback','created','notification','attempts'].some(k => Object.hasOwn(values, k))) throw new Error('Reserved job fields cannot be overwritten');
+    if (['schema_version','id','tool','action','callback','created','notification','attempts',...GENERATED].some(k => Object.hasOwn(values, k))) throw new Error('Reserved job fields cannot be overwritten');
     if (!['pending','dispatching','finished'].includes(values.state ?? 'pending')) throw new Error('Invalid initial job state');
     if (destination) {
       this.policy.route(destination.kind === 'herdr' ? 'herdr' : 'webhook');
@@ -125,12 +145,16 @@ export class Rendezvous {
     try { live = now() - (await stat(path.join(this.root, 'heartbeat'))).mtimeMs / 1000 <= 120; } catch {}
     if (!live) throw new Error('Completion worker is not running; operation was not dispatched');
     const id = randomUUID().replaceAll('-', '');
-    await write(this.path(id), { schema_version: 1, id, tool, action, kind: values.kind ?? tool, callback: destination,
-      created: now(), state: 'pending', notification: destination ? 'pending' : 'disabled', attempts: 0, ...values });
+    const activity = session == null ? null : this.connection(session);
+    activity?.track(id);
+    try {
+      await write(this.path(id), { schema_version: 1, id, tool, action, kind: values.kind ?? tool, callback: destination,
+        created: now(), state: 'pending', notification: destination ? 'pending' : 'disabled', attempts: 0, ...values });
+    } catch (error) { activity?.untrack(id); throw error; }
     return id;
   }
   async update(id, values) {
-    if (['id','tool','action','callback','created','schema_version'].some(k => Object.hasOwn(values, k))) throw new Error('Immutable job fields cannot be overwritten');
+    if (['id','tool','action','callback','created','schema_version',...GENERATED].some(k => Object.hasOwn(values, k))) throw new Error('Immutable job fields cannot be overwritten');
     const file = this.path(id);
     await write(file, { ...await load(file), ...values });
   }
@@ -155,6 +179,8 @@ export class Rendezvous {
   }
   async deliver(file, data) {
     this.policy.allow(data.tool, data.action);
+    if (data.state !== 'finished') throw new Error('Only finished jobs can notify');
+    await write(file, data); // Result and timeline become visible before either signal.
     if (data.callback.kind === 'herdr') {
       this.policy.route('herdr');
       await this.herdr.ready(data.callback);
